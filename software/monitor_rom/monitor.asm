@@ -9,23 +9,28 @@
 ; ******************************************************************************************************************
 
 ; TODO: 
-;		Labels code.
-; 		Disassembler (if space available)
-; 		16 bit maths (if space available)
+; 		16 bit maths routines.
+; 		Decode addresses on disassembler (?)
+; 		Print message on first clear screen (?)
 
 		cpu	sc/mp
 
-cursor 		= 0xC00 											; cursor position
-current 	= 0xC01 											; current address (lo,hi)
-parPosn		= 0xC03 											; current param offset in buffer (low addr)
-modifier  	= 0xC04 											; instruction modifier (@,Pn)
-kbdBuffer 	= 0xC05 											; 16 character keyboard buffer
+labels 		= 0xC00												; labels, 1 byte each
+labelCount 	= 32 												; number of labels (perhaps a bit generous ?)
+
+varBase 	= labels+labelCount 								; variables after labels start here.
+
+cursor 		= varBase 											; cursor position
+current 	= varBase+1 										; current address (lo,hi)
+parPosn		= varBase+3 										; current param offset in buffer (low addr)
+modifier  	= varBase+4 										; instruction modifier (@,Pn)
+kbdBuffer 	= varBase+5 										; 16 character keyboard buffer
 kbdBufferLn = 16 										
 
 codeStart 	= kbdBuffer+kbdBufferLn								; code starts here.
 
 tapeDelay 	= 4 												; DLY parameter for 1 tape bit width.
-																; (smaller = faster tape I/O)
+																; (smaller = faster tape I/O - see file end.)
 
 		org 	0x0000
 		nop
@@ -92,7 +97,7 @@ ClearScreenLoop:
 ; ****************************************************************************************************************
 
 CommandMainLoop:
-		ldi 	(PrintAddressData-1)/256						; print Address and Data there
+		ldi 	(PrintAddressData-1)/256						; print Address only
 		xpah 	p3
 		ldi 	(PrintAddressData-1)&255
 		xpal 	p3
@@ -280,7 +285,6 @@ __CommandError: 												; unknown command.
 ;												In line Assembler
 ; ****************************************************************************************************************
 
-
 __Assembler:
 		ld 		-1(p1) 											; this is the operation code to use.
 		st 		@-1(p2) 										; push on the stack.
@@ -289,9 +293,29 @@ __Assembler:
 		csa 													; check carry flag set
 		jp 		__ASMNoParameter  								; if clear, no parameter was provided.
 
+		ldi 	parPosn & 255
 		xpal 	p1 												; get the parameter LSB
-		st 		@-1(p2) 										; push that on the stack.
-		jmp 	__ASMContinue
+		st 		@-1(p2) 										; push that on the stack, set P1 to parPosn
+		ldi 	parPosn / 256
+		xpah 	p1
+		ld 		(p1) 											; read current position
+		xpal 	p1 												; P1 now points to character.
+		ld 		(p1) 											; read character
+		xri 	'!'												; is it the label pling ?
+		jnz 	__ASMContinue 									; we don't need to change this pointer , we should technically.
+		ld 		(p2) 											; read the value, which is the label number
+		scl
+		cai 	labelCount 										; is it a valid label number
+		jp 		__CommandError 									; no, beep.
+		ld 		(p2) 											; re-read the label number
+		xae 													; put in E
+		ldi 	Labels/256 										; point p1 to labels
+		xpah 	p1
+		ldi 	Labels&255 
+		xpal 	p1
+		ld 		-0x80(p1) 										; read label indexed using E.
+		st 		(p2) 											; save as the operand
+		jmp 	__ASMContinue 									; and continue
 
 __ASMNoParameter:
 		ld 		(p2) 											; read the pushed operation code
@@ -452,6 +476,9 @@ _PutTapeBit:
 __CmdMainLoop4:
 		jmp 	__CmdMainLoop3
 
+__CmdParameterFail1:
+		jmp 	__CmdParameterFail
+
 ; ****************************************************************************************************************
 ;						GET [addr] load tape to current position or given address.
 ; ****************************************************************************************************************
@@ -465,7 +492,7 @@ LoadTape_Command:
 __GetTapeWait:
 		ld 		0(p3) 											; check keyboard break
 		ani 	0x80
-		jnz 	__CmdParameterFail
+		jnz 	__CmdParameterFail1
 		sio 													; wait for the start bit, examine tape in.
 		lde 
 		ani 	1
@@ -485,13 +512,42 @@ __GetTapeBits:
 		lde  													; examine bit 0
 		ani 	1
 		jz 		__GetTapeWait 									; go and wait for the next start bit.
+__CmdMainLoop5:
 		jmp 	__CmdMainLoop4
 
 ; ****************************************************************************************************************
-;											D :	Dump Memory
+;										L : nn Set Label to current address
 ; ****************************************************************************************************************
 
-Dump_Command:
+Label_Command:
+		xppc 	p3 												; get parameter
+		csa 													; check it exists, CY/L must be set
+		jp 		__CmdParameterFail1
+		xpal 	p1 												; get into A
+		xae 													; put into E
+		lde 													; get back
+		scl
+		cai 	labelCount 										; check is < number of labels
+		jp 		__CmdParameterFail1
+
+		ldi 	Current/256 									; point P1 to current address
+		xpah 	p1
+		ldi 	Current&255
+		xpal 	p1
+		ld 		(p1) 											; read current address
+		xpal 	p1 												; save in P1.Low
+		ldi 	Labels&255 										; get labels low byte in same page as current address
+		ccl
+		ade 													; add label # to it
+		xpal 	p1 												; put in P1.L and restore current address low
+		st 		(p1) 											; store current address low in label space.
+		jmp 	__CmdMainLoop5 									; and exit.
+
+; ****************************************************************************************************************
+;											M :	Dump Memory
+; ****************************************************************************************************************
+
+MemoryDump_Command:
 		xppc 	p3 												; get parameter if exists
 		xppc 	p3 												; update current if exists.
 		ldi 	7 												; print seven rows
@@ -517,8 +573,9 @@ __DCLoop:
 		dld 	(p2) 											; do it 7 times
 		jnz 	__DCLoop
 		ld 		@1(p2) 											; fix up stack.
+__CmdMainLoop6:
+		jmp 	__CmdMainLoop5
 
-		jmp 	__CmdMainLoop4
 
 ; ****************************************************************************************************************
 ;								B: Enter Bytes (no address, sequence of byte data)
@@ -531,7 +588,7 @@ EnterBytes_Command:
 		xpah 	p3
 		xppc 	p3 												; get the parameter.
 		csa 													; look at carry
-		jp 		__CmdMainLoop4 									; carry clear, no value.
+		jp 		__CmdMainLoop5 									; carry clear, no value.
 		ldi 	Current/256 									; make P1 point to current
 		xpah 	p1
 		ldi 	Current&255 										
@@ -547,6 +604,157 @@ EnterBytes_Command:
 		jnz 	EnterBytes_Command
 		ild 	1(p1)
 		jmp 	EnterBytes_Command
+
+; ****************************************************************************************************************
+;											D [aaaa] Disassembler
+; ****************************************************************************************************************
+
+Disassemble_Command:	
+		xppc 	p3 												; evaluate
+		xppc 	p3 												; update current if new value
+		ldi 	7												; instructions to disassemble counter
+		st 		@-4(p2)											; p2 + 0 = counter p2 + 1 = opcode p2 + 2 = operand
+__DAssLoop:														; p2 + 3 = opcode - base opcode.
+		ldi 	(PrintAddressData-1)/256						; print Address only
+		xpah 	p3
+		ldi 	(PrintAddressData-1)&255
+		xpal 	p3
+		ldi 	0
+		xppc 	p3
+		ldi 	Current / 256 									; point P1 to current address
+		xpah 	p1
+		ldi 	Current & 255
+		xpal 	p1
+		ld 		0(p1) 											; load current address into P3
+		xpal 	p3
+		ld 		1(p1)
+		xpah 	p3
+		ld 		@1(p3) 											; read opcode
+		st 		1(p2) 											; save it
+		jp 		__DAssNoOperand 								; if +ve no operand
+		ld 		@1(p3) 											; read operand
+		st 		2(p2) 											; save it
+__DAssNoOperand:
+		ldi 	(__CommandListEnd-3) & 255
+		xpal 	p3 												; update current position, setting P3 to last entry
+		st 		0(p1)											; in command table.
+		ldi 	(__CommandListEnd-3) / 256
+		xpah 	p3
+		st 		1(p1)
+
+__DAssFindOpcode: 												; the table is : text (word) opcode (byte)
+		ld 		1(p2) 											; get opcode
+		xor 	2(p3) 											; check in the same 8 byte page.
+		ani 	0xF0
+		jnz 	__DAssNextOpcode
+		ld 		1(p2) 											; get opcode
+		scl
+		cad 	2(p3) 											; subtract the base opcode.
+		st 		3(p2) 											; save a the offset (possible)
+		ani 	0xE0 											; it needs to be 0x20 or less
+		jz 		__DAssFoundOpcode 								; if >= 0 then found the correct opcode.
+__DAssNextOpcode:
+		ld 		@-3(p3) 										; go to previous entry in table
+		jmp 	__DAssFindOpcode
+
+__DAssLoop2:
+		jmp 	__DAssLoop
+__CmdMainLoop7:
+		jmp 	__CmdMainLoop6
+
+__DAssFoundOpcode:
+		ld 		2(p3) 											; look at opcode that matched.
+		ani 	0x87 											; match with 1xxx x100
+		xri 	0x84 											; which is all the immediate instructions.		
+		jnz 	__DAssNotImmediate
+		ld 		3(p2) 											; only do immediate if base offset is zero
+		jnz 	__DAssNextOpcode 								; fixes C0-C7 being LD, but C4 being LDI.
+__DAssNotImmediate:
+		ld 		0(p3) 											; save LSB of text on stack
+		st 		@-1(p2)
+		ld 		1(p3) 											; and the MSB of text on stack
+		st 		@-1(p2)
+
+		ldi 	(PrintCharacter-1) / 256 						; set P3 up to print characters
+		xpah 	p3
+		ldi 	(PrintCharacter-1) & 255 
+		xpal 	p3
+		ldi 	' '												; print a space.
+		xppc 	p3
+
+		ldi 	3 												; print 3 characters
+		st 		@-1(p2) 										; so +0 is count, +1 = text MSB, +2 = text LSB
+__DAssPrintMnemonic:
+		ld 		1(p2) 											; get text MSB which is in bits .xxxxx..
+		sr 														; shift right twice.
+		sr
+		ani 	0x1F 											; lower 5 bits only
+		jz 		__DAssSkipSpace 								; don't print spaces (00000)
+		ccl 													; make it 7 bit ASCII code.
+		adi 	64 							
+		xppc 	p3 												; display the character
+__DAssSkipSpace:
+		ldi 	5 												; now shift the encoded data left 5 times
+		st 		-1(p2)
+__DAssShiftEncode:
+		ccl
+		ld 		2(p2)
+		add 	2(p2)
+		st 		2(p2)
+		ld 		1(p2)
+		add 	1(p2)
+		st 		1(p2)
+		dld 	-1(p2)
+		jnz 	__DAssShiftEncode
+		dld 	0(p2) 											; done all three characters
+		jnz 	__DAssPrintMnemonic 							; if not keep going.
+
+		ld 		@3(p2) 											; remove mnemonic stuff off the stack.
+
+		ld 		3(p2) 											; print instruction modifier if required.
+		jnz 	__DAssPrintModifier
+
+__DAssPrintOperand:
+		ld 		1(p2) 											; get original opcode
+		jp 		__DAssNext 										; if no operand go to next line of disassembly.
+		ldi 	(PrintHexByte-1) / 256 							; set P3 to point to the hex printer
+		xpah 	p3
+		ldi 	(PrintHexByte-1) & 255
+		xpal 	p3
+		ld 		2(p2) 											; get operand
+		scl 
+		xppc 	p3 												; print it out with a leading space.
+
+__DAssNext:
+		ldi 	(PrintCharacter-1) / 256 						; set P3 up to print characters
+		xpah 	p3
+		ldi 	(PrintCharacter-1) & 255 
+		xpal 	p3
+		ldi 	13												; print a newline.
+		xppc 	p3
+
+		dld 	0(p2) 											; done all 6 lines
+		jnz 	__DAssLoop2 									; no, go round again.
+		ld 		@4(p2) 											; fix up the stack.
+		jmp 	__CmdMainLoop7 									; and time to exit.
+
+
+__DAssPrintModifier:
+		ldi 	' '												; print leading space
+		xppc 	p3
+		ld 		3(p2) 											; read modifier
+		ani 	0x04 											; is @ bit set
+		jz 		__DAssNotAutoIndexed
+		ldi 	'@'												; print '@'
+		xppc 	p3
+__DAssNotAutoIndexed:
+		ldi 	'P'												; print 'P'
+		xppc 	p3
+		ld 		3(p2) 											; print pointer register
+		ani 	3
+		ori 	'0'
+		xppc 	p3
+		jmp 	__DAssPrintOperand 								; and print operand.
 
 
 ; ****************************************************************************************************************
@@ -795,8 +1003,9 @@ __GPAShift:
 
 		ld 		@1(p1) 											; look at next character, post incrementing.
 		scl
-		cai 	33 												; if it is after space
+		cai 	34 												; if it is after space and ! (label marker)
 		jp 		__GPANextCharacter 								; go back and put it in place.
+
 		ld 		@-1(p1) 										; undo the increment, incase we've just read zero.
 
 		ldi 	parPosn & 255 									; put the parPosn address in P1.L, new posn into A
@@ -902,5 +1111,37 @@ GetCurrentAddress:
 ;		= 2,069 microcycles
 ;	
 ;		which is about 240 bits per second.
+;
+; ****************************************************************************************************************
+;
+;												Monitor Commands
+;
+; ****************************************************************************************************************
+;
+;		A [aaaa] 			Set current address to aaaa
+;		B [cc] [dd] [ee]..	Fill memory from current address
+; 		C 					Clear screen
+;		D [aaaa] 			Disassemble from aaaa (not complete yet)
+;		G aaaa 				Run from address - address must be given - return with XPPC P3
+; 		L n 				Set label n to the current address (up to 32 labels 00-1F)
+; 		M [aaaa] 			Memory dump from current address/aaaa (6 lines, 4 bytes per line)
+; 		GET [aaaa] 			Load tape to current address/aaa
+;		PUT [nnnn]			Write nnnn bytes from current address onwards to tape.
+;
+;		Command Line Assembler
+;
+;		Standard SC/MP mnemonics, except for XPAH, XPAL, XPPC, HALT and DINT which are XPH XPL XPC HLT DIN
+;		respectively (4 character mnemonics not supported)
+;
+;		Address modes are written as such:
+;
+;		Direct:			LD 	address 					(offset auto calculated, also for jump)
+;		Indexed:		LD  P1 7 						(normally ld 7(p1))
+;		Immediate:		DLY 42 					
+;		AutoIndexed:	LD @P1 4 						(normally ld @4(p1))
+;
+;		Labels are accessed via the pling, so to jump to label 4 rather than address 4 you write
+;
+;		JMP 4!
 ;
 ; ****************************************************************************************************************

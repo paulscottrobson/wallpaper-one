@@ -1,4 +1,4 @@
-        org 0x0751
+        org 0x0747
 ;
 ; 	This file is generated automatically by gencommands.py
 ;
@@ -31,7 +31,7 @@ __CommandList:
         db    0x1e
         dw    0x4a4c ; RRL
         db    0x1f
-        dw    0x0004 ; D
+        dw    0x000d ; M
         db    0x20
         dw    0x0001 ; A
         db    0x21
@@ -45,6 +45,10 @@ __CommandList:
         db    0x25
         dw    0x0002 ; B
         db    0x26
+        dw    0x000c ; L
+        db    0x27
+        dw    0x0004 ; D
+        db    0x28
         dw    0x620c ; XPL
         db    0x30
         dw    0x6208 ; XPH
@@ -109,13 +113,16 @@ __CommandList:
         db    0xf8
         dw    0x0c29 ; CAI
         db    0xfc
+__CommandListEnd:
         dw    0x0000 ; End Marker	
 
 __CommandTable:
-        dw    Dump_Command
+        dw    MemoryDump_Command
         dw    Address_Command
         dw    Go_Command
         dw    PutTape_Command
         dw    LoadTape_Command
         dw    ClearScreen_Command
         dw    EnterBytes_Command
+        dw    Label_Command
+        dw    Disassemble_Command
