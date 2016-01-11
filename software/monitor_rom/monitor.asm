@@ -8,10 +8,6 @@
 ; ******************************************************************************************************************
 ; ******************************************************************************************************************
 
-; TODO: 
-;		Random#, ASCII to Integer
-; 		Testing of Arithmetic routines.
-
 		cpu	sc/mp
 
 labels 		= 0xC00												; labels, 1 byte each
@@ -24,7 +20,8 @@ current 	= varBase+1 										; current address (lo,hi)
 isInit      = varBase+3 										; if already initialised, this is $A7.
 parPosn		= varBase+4 										; current param offset in buffer (low addr)
 modifier  	= varBase+5 										; instruction modifier (@,Pn) when assembling.
-kbdBuffer 	= varBase+6 										; 16 character keyboard buffer
+random  	= varBase+6 										; random number LFSR
+kbdBuffer 	= varBase+8 										; 16 character keyboard buffer
 kbdBufferLn = 16 										
 
 codeStart 	= kbdBuffer+kbdBufferLn								; code starts here after the keyboard buffer.
@@ -39,7 +36,7 @@ tapeDelay 	= 4 												; DLY parameter for 1 tape bit width.
 
 ; ******************************************************************************************************************
 ;
-;									Find Top of Memory to initialise the stack.
+;				Boot Up. First we check for a ROM @ $9000 and if it is 0x68 we boot there instead
 ;
 ; ******************************************************************************************************************
 
@@ -51,6 +48,13 @@ BootMonitor:
 		jnz 	__BootMonitor
 		xppc 	p1 												; e.g. JMP $9001
 __BootMonitor:
+
+; ******************************************************************************************************************
+;
+;									Find Top of Memory to initialise the stack.
+;
+;			(slightly tweaked to work round 4+12 emulator limitations - will work on real chip)
+; ******************************************************************************************************************
 
 		ldi 	0x0F 											; point P2 to theoretical top of RAM on basic m/c
 		xpah 	p2 												; e.g. 0xFFF
@@ -102,6 +106,10 @@ ClearScreenLoop:
 		st 		Current-Cursor+1(p1)
 		ldi 	codeStart&255
 		st 		Current-Cursor(p1)
+		ldi 	0xAC
+		st 		random-Cursor+1(p1)								; initialise the LFSR with $ACE1
+		ldi 	0xE1
+		st 		random-Cursor(p1)
 
 																; print boot message - can lose this if required.
 		ldi 	(PrintCharacter-1)/256 							; set P3 = print character.
@@ -119,7 +127,9 @@ MessageLoop:
 		jmp 	MessageLoop
 
 Message:
-		db 		"** SC/MP OS **",13,0
+		db 		"** SC/MP OS **",13
+		db 		"V0.90 PSR 2016",13
+		db 		0
 
 ; ****************************************************************************************************************
 ;
@@ -1115,6 +1125,8 @@ GetCurrentAddress:
 		lde 													; low byte to P1.L
 		xpal 	p1 
 		xppc 	p3
+
+		db 		"SC/MP Monitor by Paul Robson paul@robsons.org.uk Jan 2016."
 
 ; ****************************************************************************************************************
 ;

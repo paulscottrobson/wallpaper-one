@@ -8,6 +8,7 @@
 
 	jmp	 	GoBoot 												; this will be at location 1.
 	jmp 	Maths 												; maths routine, at location 3.
+
 	; any other routines you care to call.
 
 GoBoot:
@@ -16,6 +17,69 @@ GoBoot:
 	ldi 	(BootMonitor-1) / 256
 	xpah 	p3
 	xppc 	p3
+
+; ******************************************************************************************************************
+;											16 Bit shift left/right macros
+; ******************************************************************************************************************
+
+shiftLeft macro val
+	ccl 													
+	ld 		val(p2)
+	add 	val(p2)
+	st 		val(p2)
+	ld 		val+1(p2)
+	add 	val+1(p2)
+	st 		val+1(p2)		
+	endm
+
+shiftRight macro val
+	ccl
+	ld 		val+1(p2)
+	rrl 
+	st 		val+1(p2)
+	ld 		val(p2)
+	rrl 
+	st 		val(p2)
+	endm
+
+; ******************************************************************************************************************
+;										' Random Number generator
+; ******************************************************************************************************************
+
+MATH_Random:
+	ldi 	Random & 255 										; set P1 to point to RNG, push P1 on stack.
+	xpal 	p1
+	st 		@-3(p2)												; we allow 2 bytes for the final result here.
+	ldi 	Random / 256 	
+	xpah 	p1
+	st 		@-1(p2)
+	ccl 														; shift random seed right.
+	ld 		1(p1)
+	rrl
+	st 		1(p1)
+	ld 		0(p1)
+	rrl 
+	st 		0(p1)
+	csa 														; look at carry out, lost bit.
+	ani 	0x80 												; is it clear ?
+	jnz 	__MARandomNoXor
+	ld 		0(p1) 												; xor lfsr with $A1A1
+	xri 	0xA1
+	st 		0(p1)
+	ld 		1(p1)
+	xri 	0xA1
+	st 		1(p1)
+__MARandomNoXor:
+	ld 		0(p1) 												; put the LFSR in the result space on the stack
+	st 		2(p2)
+	ld 		1(p1)
+	st 		3(p2)
+	ld 		@1(p2) 												; restore P1
+	xpah 	p1
+	ld 		@1(p2)
+	xpal 	p1
+	ccl 														; no problems
+	jmp 	MATH_Exit
 
 ; ******************************************************************************************************************
 ;
@@ -29,7 +93,9 @@ GoBoot:
 ;		on entry, A is the function (+,-,*,/ etc.). P2 should be left in the 'correct' state afterwards,
 ;		so if you add two numbers then p2 will be 2 higher than when the routine was entered.
 ;
-;		Returns CS on error (division by zero) - in this case the parameters are not touched.
+;		Supported : + - * / ? (ASCII @ p1 -> integer, p1 updated) ' (random number)
+;
+;		Returns CS on error (division by zero, bad ASCII String) - in this case the parameters are not touched.
 ;
 ;		Note that division uses a fair chunk of the stack :)
 ;
@@ -44,7 +110,12 @@ Maths:															; maths support routine.
 	xri 	'-'!'*'
 	jz 		MATH_Multiply
 	xri 	'*'!'/'
-	jz 		MATH_Divide
+	jz 		MATH_Divide2
+	xri 	'/'!'?' 											; ASCII (P1) -> Integer (? operator)
+	jz 		MATH_ToInteger
+	xri 	'?'!0x27 											; Random number generator (' operator)
+	jz 		MATH_Random 
+MATH_Error:
 	scl 														; error, unknown command.
 MATH_Exit:
 	xppc 	p3 													; return
@@ -80,30 +151,6 @@ MATH_Subtract:
 	ld 		@2(p2)
 	ccl
 	jmp 	MATH_Exit
-
-; ******************************************************************************************************************
-;											16 Bit shift left/right macros
-; ******************************************************************************************************************
-
-shiftLeft macro val
-	ccl 													
-	ld 		val(p2)
-	add 	val(p2)
-	st 		val(p2)
-	ld 		val+1(p2)
-	add 	val+1(p2)
-	st 		val+1(p2)		
-	endm
-
-shiftRight macro val
-	ccl
-	ld 		val+1(p2)
-	rrl 
-	st 		val+1(p2)
-	ld 		val(p2)
-	rrl 
-	st 		val(p2)
-	endm
 
 ; ******************************************************************************************************************
 ;												'*' : 16 bit signed multiply
@@ -154,6 +201,83 @@ __MultiplyExit:
 MATH_Exit1:
 	jmp 	MATH_Exit
 
+; ******************************************************************************************************************
+;								? Convert string at P1 to 16 bit integer base 10
+; ******************************************************************************************************************
+
+MATH_Divide2:
+	jmp 	MATH_Divide
+
+MATH_ToInteger:
+
+	section SCMPToInteger
+
+digitCount = -1													; digits converted.
+resultHi = -2  													; result is pushed at the end
+resultLo = -3 
+shiftCount = -4 												; counter used when multiplying by 10.
+tempHi = -5 													; temporary result for x 10.
+tempLo = -6
+
+	ldi 	0 													; clear digitcount and result to zero
+	st 		digitCount(p2)
+	st 		resultHi(p2)
+	st 		resultLo(p2)
+ToInt_Loop:
+	ld 		0(p1) 												; read next digit
+	scl 	
+	cai 	'9'+1
+	jp 		ToInt_End 											; if > 9 then fail.
+	adi 	128+10 												; if < 0 then fail
+	jp 		ToInt_End
+	ild 	digitCount(p2) 										; increment count of digits converted.
+	ldi 	2 													; set shift counter to 2
+	st 		shiftCount(p2)
+	ld 		resultHi(p2) 										; copy result current to temp
+	st 		tempHi(p2)
+	ld 		resultLo(p2)
+	st 		tempLo(p2)
+ToInt_Shift:
+	shiftleft resultLo 											; shift result left
+	dld 	shiftCount(p2) 										; after 2nd time round (x 4) will be zero
+	jnz 	ToInt_NoAdd
+	ccl 														; add original value when x 4 - e.g. x 5
+	ld 		resultLo(p2)
+	add 	tempLo(p2)
+	st 		resultLo(p2)
+	ld 		resultHi(p2)
+	add 	tempHi(p2)
+	st 		resultHi(p2)
+ToInt_NoAdd:
+	ld 		shiftCount(p2) 										; go round until -ve, e.g. 3 in total.
+	jp 		ToInt_Shift
+
+	ld 		@1(p1) 												; read the digit already tested.
+	ani 	0x0F 												; to a number
+	ccl 
+	add 	resultLo(p2) 										; add to result
+	st 		resultLo(p2)
+	csa 														; if carry clear
+	jp 		ToInt_Loop 											; go round again.
+	ild 	resultHi(p2) 										; adds the carry to high
+	jmp 	ToInt_Loop
+
+ToInt_End:
+	ld 		digitCount(p2) 										; if digit count = 0, e.g. nothing converted
+	scl
+	jz 		MATH_Exit1 											; exit with carry set
+
+	ld 		resultHi(p2) 										; save result on stack
+	st 		-1(p2)
+	ld 		resultLo(p2)
+	st 		@-2(p2)
+	ccl 														; clear carry as okay, and exit.
+	endsection SCMPToInteger
+
+MATH_Exit3:
+	jmp 	MATH_Exit1
+
+
 
 ; ******************************************************************************************************************
 ;											'/' : 16 bit signed divide
@@ -179,7 +303,7 @@ eTemp = -8 														; temporary value of sign.
 	ld 		denominatorLo(p2) 									; check denominator 
 	or 		denominatorHi(p2) 
 	scl 														; if zero return CY/L Set
-	jz 		MATH_Exit1
+	jz 		MATH_Exit3
 
 	ldi 	0 													; clear quotient and remainder
 	st 		quotientHi(p2)
@@ -217,7 +341,7 @@ __DivideNotSigned:
 	jmp 	__DivideLoop
 
 __MATH_Exit2
-	jmp 	MATH_Exit1
+	jmp 	MATH_Exit3
 
 __DivideLoop:
 	ld 		bitLo(p2) 											; keep going until all bits done.
