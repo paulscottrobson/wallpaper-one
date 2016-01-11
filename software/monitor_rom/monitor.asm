@@ -9,9 +9,9 @@
 ; ******************************************************************************************************************
 
 ; TODO: 
-; 		16 bit maths routines.
+;		Check any other (random # ?)
+;		More testing of numbers (seperate program ???)
 ; 		Decode addresses on disassembler (?)
-; 		Print message on first clear screen (?)
 
 		cpu	sc/mp
 
@@ -22,9 +22,10 @@ varBase 	= labels+labelCount 								; variables after labels start here.
 
 cursor 		= varBase 											; cursor position
 current 	= varBase+1 										; current address (lo,hi)
-parPosn		= varBase+3 										; current param offset in buffer (low addr)
-modifier  	= varBase+4 										; instruction modifier (@,Pn)
-kbdBuffer 	= varBase+5 										; 16 character keyboard buffer
+isInit      = varBase+3 										; if already initialise, this is $A7.
+parPosn		= varBase+4 										; current param offset in buffer (low addr)
+modifier  	= varBase+5 										; instruction modifier (@,Pn)
+kbdBuffer 	= varBase+6 										; 16 character keyboard buffer
 kbdBufferLn = 16 										
 
 codeStart 	= kbdBuffer+kbdBufferLn								; code starts here.
@@ -35,12 +36,15 @@ tapeDelay 	= 4 												; DLY parameter for 1 tape bit width.
 		org 	0x0000
 		nop
 
+		include maths.asm 										; import the maths routines.
+
 ; ******************************************************************************************************************
 ;
 ;									Find Top of Memory to initialise the stack.
 ;
 ; ******************************************************************************************************************
 
+BootMonitor:
 		ldi 	0x0F 											; point P2 to theoretical top of RAM on basic m/c
 		xpah 	p2 												; e.g. 0xFFF
 		ldi 	0xFF 											; ideally you'd make this 0x003F and remove the ld
@@ -51,21 +55,6 @@ FindTopMemory:
 		st 		@-64(p2) 										; predecrementing by 64.
 		xor 	(p2) 											; did it write correctly.
 		jnz 	FindTopMemory 									; now P2 points to top of memory.
-
-; ******************************************************************************************************************
-;
-;									Reset cursor position and current address.
-;
-; ******************************************************************************************************************
-
-		ldi 	Current/256 									; set P1 to current address
-		xpah 	p1
-		ldi 	Current&255
-		xpal 	p1
-		ldi 	codeStart & 255 								; reset current address to code start
-		st 		@1(p1)
-		ldi 	codeStart / 256
-		st 		@(p1)
 
 ; ******************************************************************************************************************
 ;
@@ -89,6 +78,39 @@ ClearScreenLoop:
 		xpal 	p1 
 		ldi 	0
 		st 		0(p1)											
+
+; ****************************************************************************************************************
+;
+;												Check if initialised.
+;
+; ****************************************************************************************************************
+
+		ld 		isInit-Cursor(p1) 								; have we initialised ?
+		xri 	0xA7 											; if so this byte should be $A7
+		jz 		CommandMainLoop
+		ldi 	0xA7 											; set the initialised byte
+		st 		isInit-Cursor(p1)
+		ldi 	codeStart/256 									; set the initial address
+		st 		Current-Cursor+1(p1)
+		ldi 	codeStart&255
+		st 		Current-Cursor(p1)
+
+		ldi 	(PrintCharacter-1)/256 							; set P3 = print character.
+		xpah 	p3
+		ldi 	(PrintCharacter-1)&255
+		xpal 	p3
+		ldi 	Message / 256 									; set P1 = boot message
+		xpah 	p1
+		ldi 	Message & 255
+		xpal 	p1
+MessageLoop:
+		ld 		@1(p1) 											; read character
+		jz 		CommandMainLoop 								; end of message
+		xppc 	p3 												; print it
+		jmp 	MessageLoop
+
+Message:
+		db 		"** SC/MP OS **",13,0
 
 ; ****************************************************************************************************************
 ;
@@ -447,7 +469,7 @@ _PutTapeByte:													; output byte at P1
 		xae 	
 		sio
 		dly 	tapeDelay * 4 									; 0 continuation bit + gap between tapes with no signal 
-		ldi 	0x80 											; set bit high
+		ldi 	0x1 											; set bit high
 		xae
 		sio 
 		ldi 	0
@@ -461,11 +483,12 @@ _PutTapeBit:
 		ldi 	0
 		dly 	tapeDelay 								
 		dld 	-3(p2) 											; do all 8 bits.
+		jnz 	_PutTapeBit
 		dld 	-1(p2) 											; decrement counter
 		jnz 	_PutTapeByte
 		dld 	-2(p2) 											; note MSB goes 0 to -1 when finished.
 		jp 		_PutTapeByte
-		ldi 	0x80 											; add the termination bit.
+		ldi 	0x01 											; add the termination bit.
 		xae
 		sio
 		ldi 	0 												; put that out.
@@ -495,8 +518,7 @@ __GetTapeWait:
 		jnz 	__CmdParameterFail1
 		sio 													; wait for the start bit, examine tape in.
 		lde 
-		ani 	1
-		jz 		__GetTapeWait
+		jp 		__GetTapeWait
 		dly 	tapeDelay * 3 / 2 								; half way into the first bit.
 		ldi 	8 												; read in 8 bits.
 		st 		-1(p2)
@@ -509,9 +531,8 @@ __GetTapeBits:
 		lde 													; store byte at current address
 		st 		@1(p1)
 		sio 													; read in the byte, which is zero if continuing.
-		lde  													; examine bit 0
-		ani 	1
-		jz 		__GetTapeWait 									; go and wait for the next start bit.
+		lde  													; examine bit 7 shifted in.
+		jp 		__GetTapeWait 									; if zero, wait for the next start bit.
 __CmdMainLoop5:
 		jmp 	__CmdMainLoop4
 
@@ -1121,7 +1142,7 @@ GetCurrentAddress:
 ;		A [aaaa] 			Set current address to aaaa
 ;		B [cc] [dd] [ee]..	Fill memory from current address
 ; 		C 					Clear screen
-;		D [aaaa] 			Disassemble from aaaa (not complete yet)
+;		D [aaaa] 			Disassemble from aaaa
 ;		G aaaa 				Run from address - address must be given - return with XPPC P3
 ; 		L n 				Set label n to the current address (up to 32 labels 00-1F)
 ; 		M [aaaa] 			Memory dump from current address/aaaa (6 lines, 4 bytes per line)
