@@ -1,10 +1,8 @@
 ; ******************************************************************************************************************
 ; ******************************************************************************************************************
-; ******************************************************************************************************************
 ;
 ;												Machine Language Monitor
 ;
-; ******************************************************************************************************************
 ; ******************************************************************************************************************
 ; ******************************************************************************************************************
 
@@ -20,19 +18,18 @@ current 	= varBase+1 										; current address (lo,hi)
 isInit      = varBase+3 										; if already initialised, this is $A7.
 parPosn		= varBase+4 										; current param offset in buffer (low addr)
 modifier  	= varBase+5 										; instruction modifier (@,Pn) when assembling.
-random  	= varBase+6 										; random number LFSR
-kbdBuffer 	= varBase+8 										; 16 character keyboard buffer
+kbdBuffer 	= varBase+6 										; 16 character keyboard buffer
 kbdBufferLn = 16 										
 
-codeStart 	= kbdBuffer+kbdBufferLn								; code starts here after the keyboard buffer.
-
+codeStart 	= kbdBuffer+kbdBufferLn								; user code starts here after the keyboard buffer.
+														
 tapeDelay 	= 4 												; DLY parameter for 1 tape bit width.
 																; (smaller = faster tape I/O - see file end.)
 
 		org 	0x0000
 		nop 													; mandatory pre-increment NOP
 
-		include maths.asm 										; import the maths routines.
+		include maths.asm 										; import the maths routines, accessed via $0003
 
 ; ******************************************************************************************************************
 ;
@@ -44,7 +41,7 @@ BootMonitor:
 		ldi 	0x90 											; point P1 to $9000 which is the first ROM.
 		xpah 	p1
 		ld 		0(p1) 											; if that byte is $68, go straight there.
-		xri 	0x68
+		xri 	0x68  											; we can boot into VTL-2 or whatever.
 		jnz 	__BootMonitor
 		xppc 	p1 												; e.g. JMP $9001
 __BootMonitor:
@@ -106,11 +103,6 @@ ClearScreenLoop:
 		st 		Current-Cursor+1(p1)
 		ldi 	codeStart&255
 		st 		Current-Cursor(p1)
-		ldi 	0xAC
-		st 		random-Cursor+1(p1)								; initialise the LFSR with $ACE1
-		ldi 	0xE1
-		st 		random-Cursor(p1)
-
 																; print boot message - can lose this if required.
 		ldi 	(PrintCharacter-1)/256 							; set P3 = print character.
 		xpah 	p3 
@@ -122,14 +114,24 @@ ClearScreenLoop:
 		xpal 	p1
 MessageLoop:
 		ld 		@1(p1) 											; read character
-		jz 		CommandMainLoop 								; end of message
+		jz 		InitialBeep 									; end of message
 		xppc 	p3 												; print it
 		jmp 	MessageLoop
 
 Message:
-		db 		"** SC/MP OS **",13
-		db 		"V0.90 PSR 2016",13
+		db 		"** SC/MP OS **",13 							; short boot message
+		db 		"V0.92 PSR 2016",13
 		db 		0
+
+InitialBeep:
+		ldi 	1 												; Beep on booting.
+		cas 													; play low tone
+		dly 	0xFF
+		ldi 	5												; play high tone.
+		cas
+		dly 	0xFF
+		ldi 	0 												; sound off.
+		cas
 
 ; ****************************************************************************************************************
 ;
@@ -1126,8 +1128,6 @@ GetCurrentAddress:
 		xpal 	p1 
 		xppc 	p3
 
-		db 		"SC/MP Monitor by Paul Robson paul@robsons.org.uk Jan 2016."
-
 ; ****************************************************************************************************************
 ;
 ;											List of commands and Jump Table
@@ -1161,16 +1161,16 @@ GetCurrentAddress:
 ; ****************************************************************************************************************
 ;
 ;		A [aaaa] 			Set current address to aaaa
-;		B [cc] [dd] [ee]..	Fill memory from current address
+;		B [cc] [dd] [ee]..	Put Bytes cc dd ee etc. in memory from current address onwards.
 ; 		C 					Clear screen
-;		D [aaaa] 			Disassemble from aaaa
+;		D [aaaa] 			Disassemble from aaaa (7 lines of disassembly)
 ;		G aaaa 				Run from address - address must be given - return with XPPC P3
-; 		L n 				Set label n to the current address (up to 32 labels 00-1F)
-; 		M [aaaa] 			Memory dump from current address/aaaa (6 lines, 4 bytes per line)
+; 		L n 				Set label n to the current address (up to 24 labels 00-17)
+; 		M [aaaa] 			Memory dump from current address/aaaa (7 lines, 4 bytes per line)
 ; 		GET [aaaa] 			Load tape to current address/aaa
 ;		PUT [nnnn]			Write nnnn bytes from current address onwards to tape.
 ;
-;		Command Line Assembler
+;		Command Line Assembler:
 ;
 ;		Standard SC/MP mnemonics, except for XPAH, XPAL, XPPC, HALT and DINT which are XPH XPL XPC HLT DIN
 ;		respectively (4 character mnemonics not supported)
@@ -1186,6 +1186,6 @@ GetCurrentAddress:
 ;
 ;		JMP 4!
 ;
-;		Documentation of the Mathematics functions are in the included file maths.asm
+;		Documentation of the Mathematics functions are in the included file maths.asm. Sort of.
 ;
 ; ****************************************************************************************************************

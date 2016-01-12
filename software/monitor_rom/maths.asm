@@ -43,42 +43,51 @@ shiftRight macro val
 	endm
 
 ; ******************************************************************************************************************
-;										' Random Number generator
+;										$ (Integer -> ASCII, p1 backwards)
 ; ******************************************************************************************************************
 
-MATH_Random:
-	ldi 	Random & 255 										; set P1 to point to RNG, push P1 on stack.
-	xpal 	p1
-	st 		@-3(p2)												; we allow 2 bytes for the final result here.
-	ldi 	Random / 256 	
-	xpah 	p1
-	st 		@-1(p2)
-	ccl 														; shift random seed right.
-	ld 		1(p1)
-	rrl
-	st 		1(p1)
-	ld 		0(p1)
-	rrl 
+MATH_ToASCII:
+	ldi 	0 												; write a terminating NULL to the string
 	st 		0(p1)
-	csa 														; look at carry out, lost bit.
-	ani 	0x80 												; is it clear ?
-	jnz 	__MARandomNoXor
-	ld 		0(p1) 												; xor lfsr with $A1A1
-	xri 	0xA1
-	st 		0(p1)
-	ld 		1(p1)
-	xri 	0xA1
-	st 		1(p1)
-__MARandomNoXor:
-	ld 		0(p1) 												; put the LFSR in the result space on the stack
+
+	ld 		@-2(p2) 										; reserve 2 spaces on the stack.
+	ld 		3(p2) 											; copy original TOS to new TOS
+	st 		1(p2)
+	ld 		2(p2)
+	st 		0(p2)
+
+	xpah 	p3 												; save P3 on stack.
+	st 		3(p2) 											; where the number has just come from
+	xpal 	p3												; we restore P3 last.
 	st 		2(p2)
-	ld 		1(p1)
-	st 		3(p2)
-	ld 		@1(p2) 												; restore P1
-	xpah 	p1
+
+__ToASCII_Loop:
+	ldi 	(Maths-1)/256 									; set P3 to Maths routine
+	xpah 	p3
+	ldi 	(Maths-1)&255
+	xpal 	p3
+	ldi 	0  												; push 10 on the stack
+	st 		@-1(p2)
+	ldi 	10
+	st 		@-1(p2)
+	ldi 	'\\'											; unsigned division
+	xppc 	p3 												; calculate the result.
+
+	ld 		-2(p2) 											; get the remainder
+	ori 	'0'												; make ASCII
+	st 		@-1(p1) 										; save in the buffer, moving pointer backwards.
+
+	ld 		0(p2) 											; loop back if TOS non zero
+	or 		1(p2)
+	jnz 	__ToASCII_Loop
+
+	ld 		@2(p2) 											; throw that away
+
+	ld 		@1(p2) 											; restore P3
+	xpal 	p3
 	ld 		@1(p2)
-	xpal 	p1
-	ccl 														; no problems
+	xpah 	p3
+	ccl 													; result is fine.
 	jmp 	MATH_Exit
 
 ; ******************************************************************************************************************
@@ -93,30 +102,48 @@ __MARandomNoXor:
 ;		on entry, A is the function (+,-,*,/ etc.). P2 should be left in the 'correct' state afterwards,
 ;		so if you add two numbers then p2 will be 2 higher than when the routine was entered.
 ;
-;		Supported : + - * / ? (ASCII @ p1 -> integer, p1 updated) ' (random number)
+;		Supported : + - (add/subtract)
+;					* 	(multiply) 
+;					/ 	(signed divide) 
+;					\ 	(unsigned divide)
+;					? 	(ASCII @ p1 -> Integer. CS on error. P1 points to first non numeric character
+;					$ 	(Integer -> ASCII @p1. On start, p1 should point to the end of butter as written backwards)
 ;
-;		Returns CS on error (division by zero, bad ASCII String) - in this case the parameters are not touched.
+;		Returns CS on error:
+;				Divisons			Division by zero error, no change to the stack values
+;				ASCII->Integer 		No legal number, p1 points to 'bad' character, no change to stack.
+;									(Note that the conversion is terminated by the first non digit, so this
+;									 error means the first character was not a digit.)
+;
+;		For both divisions, the remainder is kept on the stack immediately below the TOS, this is by design.
+;		and can be accessed by ld -1(p2) (hi) ld -2(p2) (lo).
+;
 ;
 ;		Note that division uses a fair chunk of the stack :)
 ;
 ; ******************************************************************************************************************
 
 Maths:															; maths support routine.
-
-	xri 	'+' 												; dispatch function in A to the executing code.
-	jz 		MATH_Add
-	xri 	'+'!'-'
+	xri 	'$'													; integer to ASCII conversion
+	jz 		MATH_ToASCII
+	xri 	'$'!'+' 											; 16 bit addition
+	jz 		MATH_Add 
+	xri 	'+'!'-' 											; 16 bit subtraction
 	jz 		MATH_Subtract
-	xri 	'-'!'*'
-	jz 		MATH_Multiply
-	xri 	'*'!'/'
+	xri 	'-'!'*'												; 16 bit signed/unsigned multiplication
+	jz 		MATH_Multiply 										
+	xri 	'*'!'/' 											; 16 bit signed division
+	ccl 
 	jz 		MATH_Divide2
-	xri 	'/'!'?' 											; ASCII (P1) -> Integer (? operator)
+	xri 	'/'!'\\' 											; 16 bit unsigned division
+	scl
+	jz 		MATH_Divide2
+	xri 	'\\'!'?' 											; ASCII (P1) -> Integer (? operator)
 	jz 		MATH_ToInteger
-	xri 	'?'!0x27 											; Random number generator (' operator)
-	jz 		MATH_Random 
+
 MATH_Error:
 	scl 														; error, unknown command.
+
 MATH_Exit:
 	xppc 	p3 													; return
 	jmp  	Maths 												; re-entrant
@@ -153,7 +180,7 @@ MATH_Subtract:
 	jmp 	MATH_Exit
 
 ; ******************************************************************************************************************
-;												'*' : 16 bit signed multiply
+;									'*' : 16 bit signed or unsigned multiply
 ; ******************************************************************************************************************
 
 MATH_Multiply:
@@ -277,11 +304,13 @@ ToInt_End:
 MATH_Exit3:
 	jmp 	MATH_Exit1
 
-
-
 ; ******************************************************************************************************************
-;											'/' : 16 bit signed divide
+;							'/' : 16 bit signed/unsigned divide (CY/L = 0 = signed)
 ; ******************************************************************************************************************
+
+MATH_DivideByZero:												; come here for divide by zero.
+	scl
+	jmp 	MATH_Exit3
 
 MATH_Divide:
 
@@ -299,11 +328,11 @@ remainderHi = -5 												; remainder
 remainderLo = -6
 signCount = -7 													; sign of result (bit 0)
 eTemp = -8 														; temporary value of sign.
+tempHi = -9 													; high byte temporary
 
 	ld 		denominatorLo(p2) 									; check denominator 
 	or 		denominatorHi(p2) 
-	scl 														; if zero return CY/L Set
-	jz 		MATH_Exit3
+	jz 		MATH_DivideByZero 									; fail if dividing by zero.
 
 	ldi 	0 													; clear quotient and remainder
 	st 		quotientHi(p2)
@@ -317,6 +346,10 @@ eTemp = -8 														; temporary value of sign.
 
 	lde 														; save E
 	st 		eTemp(p2)
+
+	csa 														; look at carry bit
+	ani 	0x80 												; if set, unsigned division.
+	jnz 	__DivideLoop 										; so skip over the sign removal code.
 
 	ldi 	3
 __DivideUnsignLoop:
@@ -364,7 +397,10 @@ __DivideNoIncRemainder:
 	xae 														; save in E.
 	ld 		remainderHi(p2)
 	cad 	denominatorHi(p2) 									; temp.high is now in A
-	jp 		__DivideRemainderGreater 							; if >= 0 then remainder >= denominator
+	st 		tempHi(p2) 											; temp.high now saved
+	csa 														; check carry flag
+	ani 	0x80 	
+	jnz 	__DivideRemainderGreater 							; if set then remainder >= denominator
 
 __DivideContinue:
 	shiftright 	bitLo 											; shift bit right
@@ -400,6 +436,7 @@ __DivideComplete:
 	jmp 	__MATH_Exit2
 
 __DivideRemainderGreater: 										; this is the "if temp >= 0 bit"
+	ld 		tempHi(p2) 											; get the difference back.
 	st 		remainderHi(p2) 									; save temp.high value into remainder.high
 	lde 														; copy temp.low to remainder.low
 	st 		remainderLo(p2) 
