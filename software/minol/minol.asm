@@ -12,6 +12,13 @@
 	include source\errors.asm 									; Error Codes
 
 ; ****************************************************************************************************************
+; ****************************************************************************************************************
+; 	NOTE: When executing line follow the line with $FF so it thinks it has reached the program end.
+; ****************************************************************************************************************
+; ****************************************************************************************************************
+
+
+; ****************************************************************************************************************
 ;													Main Program
 ; ****************************************************************************************************************
 
@@ -19,19 +26,33 @@
 
 	db 		0x68												; this makes it boot straight into this ROM.
 	lpi 	p2,0xFF8											; set up stack default value
+	lpi 	p3,SystemMemory
 
-	lpi 	p3,EvaluateExpression-1
-	lpi 	p1,expr
+	lpi 	p3,CMD_Run-1
 	xppc	p3
+
 wait1:	
 	jmp 	wait1
-expr:
-	db 		"(2,3)",0
+
+
+ProgramBase:
+	code 	1,"\"START\":CLEAR:GOTO 140"
+	code 	10,"HELLO WORLD"
+	code 	20,"GOTO 20"
+	code 	30,"LET B = 69:LET A = 42:C = A + B:END"
+	code 	120,"D = D + 1:(0,4) = D:(12,130) = 69:GOTO 120"
+	code 	130,"A=!:B='@':C=42:D=0-1:GOTO 130"
+	code 	140,"IF 1 # 255 ; A = A + 1: B = B + 1"
+	code 	150,"IF 255 # 255 ; C = C + 1: D = D + 1"
+	code 	200,"LET A = 0"
+	code 	210,"LET A = A+1:(0,A)=A:IF A#250; GOTO 210"
+	db 		255
 
 
 ; ****************************************************************************************************************
 ;													Source Files
-; *********************************12*******************************************************************************
+; ****************************************************************************************************************
 
+	include source\itoa.asm 									; print integer routine.
 	include source\screen.asm 									; screen I/O stuff.
-	include source\expression.asm 								; expression evaluator.
+	include source\execute.asm 									; statement exec main loop
