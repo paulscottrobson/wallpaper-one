@@ -26,8 +26,11 @@
 
 	db 		0x68												; this makes it boot straight into this ROM.
 	lpi 	p2,0xFF8											; set up stack default value
-	lpi 	p3,SystemMemory
+	lpi 	p3,Print-1
+	ldi 	12
+	xppc	p3
 
+	lpi 	p3,SystemMemory
 	lpi 	p3,CMD_Run-1
 	xppc	p3
 
@@ -36,23 +39,26 @@ wait1:
 
 
 ProgramBase:
-	code 	1,"\"START\":CLEAR:GOTO 140"
+	code 	1,"\"START\":CLEAR:INA:PR A,A,A,A:GOTO240"
 	code 	10,"HELLO WORLD"
 	code 	20,"GOTO 20"
-	code 	30,"LET B = 69:LET A = 42:C = A + B:END"
-	code 	120,"D = D + 1:(0,4) = D:(12,130) = 69:GOTO 120"
-	code 	130,"A=!:B='@':C=42:D=0-1:GOTO 130"
-	code 	140,"IF 1 # 255 ; A = A + 1: B = B + 1"
-	code 	150,"IF 255 # 255 ; C = C + 1: D = D + 1"
-	code 	200,"LET A = 0"
-	code 	210,"LET A = A+1:(0,A)=A:IF A#250; GOTO 210"
+	code 	30,"LETB=69:LETA=42:C=A+B:END"
+	code 	120,"D=D+1:(0,4)=D:(12,130)=69:GOTO120"
+	code 	130,"A=!:B='@':C=42:D=0-1:GOTO130"
+	code 	140,"IF1#255;A=A+1:B=B+1"
+	code 	150,"IF255#255;C=C+1:D=D+1"
+	code 	200,"LETA=0"
+	code 	210,"LETA=A+1:IFA#250;GOTO210"
+	code 	240,"PR42,69,Y"
+	code 	241,"PR \"A:\",A,\"STAR TREK\""
+	code 	242,"PR \"(\",$(144,33),\")\""
 	db 		255
-
 
 ; ****************************************************************************************************************
 ;													Source Files
 ; ****************************************************************************************************************
 
 	include source\itoa.asm 									; print integer routine.
+	include source\atoi.asm 									; decode integer routine.
 	include source\screen.asm 									; screen I/O stuff.
 	include source\execute.asm 									; statement exec main loop
