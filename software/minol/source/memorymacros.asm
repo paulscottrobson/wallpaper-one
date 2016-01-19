@@ -7,7 +7,11 @@
 ; ****************************************************************************************************************
 
 OSMathLibrary = 0x0003 											; the Maths library is here.
-BootMonitor = 0x210 											; address to boot monitor
+BootMonitor = 0x168 											; address to boot monitor
+
+Print = 0x0003
+GetChar = 0x0005
+GetString = 0x0007
 
 ; ****************************************************************************************************************
 ;												 Memory Allocation
@@ -22,8 +26,15 @@ RandomSeed = SystemMemory-2										; Random Seed Value (2 bytes)
 CurrentLine = SystemMemory-3 									; Current Line Number (1 byte)
 Variables = SystemMemory 										; Variables (26 bytes)
 
-KeyboardBuffer = SystemMemory+26 								; Keyboard input buffer
+KeyboardBuffer = SystemMemory+32 								; Keyboard input buffer
 KeyboardBufferSize = 72 										; Number of characters allowed to be typed in.
+
+ProgramBase = 0x1004 											; Program memory here.
+
+Marker1 = 	0xFD 												; Markers indicating "Code here"
+Marker2 = 	0xB5
+Marker3 = 	0xAE
+Marker4 = 	0x76
 
 ; ****************************************************************************************************************
 ;														Macros
