@@ -10,14 +10,16 @@
 :Block  31 																// Memory Block is $1Fxx
 :Vdu (Block,254)														// Print arbitrary character string.
 
-// i,j,n reserved for general use.
+// i,j,m,n reserved for general use.
 
 :KlingonCount k 														// Number of klingons remaining.
 :Energy e 																// Energy levels
 :Torpedoes t 															// Number of torpedoes
 :Quadrant q 															// Current Quadrant
-:KlingonsNear l 														// Klingons in this sector
+:KlingonsNear o 														// Klingons in this sector
 :Sector s 																// Position in sector
+
+:WarpRequired 		88 													// Energy per warp
 
 // *************************************************************************************************************
 //
@@ -25,7 +27,7 @@
 // 
 // *************************************************************************************************************
 
-2	(Block,254) = 12 													// Set up $Vdu to print control characters
+2	Vdu = 12 															// Set up $Vdu to print control characters
 	(Block,255) = 0
 	pr $Vdu,"setup ...."
 	(Block,240) = 0 													// Set up offset table.
@@ -48,6 +50,7 @@
 	i = i + 1:if i<64; goto 5
 	Energy = 255:Torpedoes = 4 											// Reset energy and torpedoes.
 	Quadrant = !/4 														// Initialise quadrant.
+	(Block,Quadrant) = 123 												// Easily identified !
 
 // *************************************************************************************************************
 //
@@ -57,14 +60,13 @@
 
 10 	i = 64 																// Clearing the quadrant
 	pr "in_quadrant_";													// Display quadrant message
-	n = Quadrant/8*8:(Block,254) = Quadrant-n+48:pr $Vdu,",";
-	(Block,254) = Quadrant/8+48:pr $Vdu
+	n = Quadrant/8*8:Vdu = Quadrant-n+48:pr $Vdu,",";
+	Vdu = Quadrant/8+48:pr $Vdu
 
 11	(Block,i) = 0														// Clear quadrant memory
 	i = i + 1
 	if i#128; goto 11
 	n = (Block,Quadrant) 												// This is the H,T,U value
-	n = 123
 	j = 1 																// Initially writing Klingons
 	KlingonsNear = 0													// Number of klingons in sector
 12 	if n/10*10=n; goto 14 												// Is the mod 10 value zero, if so done this lot.
@@ -101,7 +103,12 @@
 	Cursor = i+5
 	pr ">";																// Input the command.
 	in i 
-*	if i<33;goto 30:if i='S';goto 30 									// Space, Return, S : Short Range Scan
+
+*	if i<33;goto 30:if i='s';goto 30 									// Space, Return, S : Short Range Scan
+ 	if i='l';goto 40 													// L : Long Range Scan
+	if i='w';goto 50 													// W : Warp to another quadrant.
+
+	end
 *	goto 20 															// Unknown command.
 
 // *************************************************************************************************************
@@ -110,7 +117,7 @@
 //
 // *************************************************************************************************************
 
-30	(Block,254)=12:pr $Vdu 												// Clear the screen
+30	Vdu=12:pr $Vdu 														// Clear the screen
 	i = 0
 31 	n = (Block,i+64)													// Read short range scanner
 	if n = 0; goto 34 													// If empty, goto next
@@ -121,5 +128,54 @@
 34 	i = i+1																// Next cell
 	if i#64; goto 31													// Until done whole screen
 	call (0,5)															// Get key strok
-	pr $Vdu 															// Clear Screen
+	pr $Vdu; 															// Clear Screen
 	goto 20 															// Get next command.										
+
+// *************************************************************************************************************
+//
+//													Long Range Scan
+//
+// *************************************************************************************************************
+
+40 	i = 7 																// This is the row counter, goes 7 4 1
+41 	j = 0:pr "__"; 														// This is the column couter, goes 0 1 2
+
+42 	n = i+j																// Direction number
+	n = (Block,240+n)													// Convert to an offset.
+	n = n + Quadrant 													// Convert to a quadrant
+
+43 	if n<64;goto 44:n = n-64:goto 43									// Force it into range
+
+44	n = (Block,n) 														// Read data from scanner
+	m = n/100*100 														// M non zero if starbase.
+	n = n - m 															// Remove starbase if any.
+	pr n;																// Print the lower 2 digits.
+	Cursor = Cursor - 4 												// Cursor back to print starbase
+*	Vdu = m/100+'0'														// Print starbase.
+	pr $Vdu;
+	Cursor = Cursor + 2 												// Skip over 2 digits
+	if j#2;pr "!";														// Print vertical bar
+	j = j + 1															// Do 3 times
+	if j # 3; goto 42
+
+* 	i = i - 3															// Next line down
+	pr 																	// New line
+	if i < 7; pr "__---+---+---"										// Seperator
+	if i < 7; goto 41 													// Go back if not finished
+	goto 20																// Get next command.
+
+// *************************************************************************************************************
+//
+//											Warp to another quadrant
+//
+// *************************************************************************************************************
+
+50 	if Energy<WarpRequired;goto 53 										// Enough energy ?
+	pr "dir : ";														// ask direction
+	in i 																// read direction
+	if 9<i; goto 20														// check in range 0-9
+	Quadrant = Quadrant + (Block,240+i) 								// New quadrant
+	Energy = Energy - WarpRequired 										// Lose Energy
+51 	if Quadrant < 64;goto 52:Quadrant = Quadrant-64:goto 51 			// Force into range
+52	goto 10 															// Enter a new quadrant.
+53  pr "energy !":goto 20												// Not enough energy
